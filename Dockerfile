@@ -1,49 +1,45 @@
-# v0.7.7
+# Base image
+FROM node:20-slim
 
-# Base node image
-FROM node:20-alpine AS node
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    openjdk-17-jdk curl bash unzip ca-certificates libjemalloc2 \
+    fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
+    libatk1.0-0 libcups2 libdbus-1-3 libgdk-pixbuf2.0-0 libnspr4 \
+    libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
+    xdg-utils wget gnupg && \
+    # Add Chrome repository and key
+    wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install jemalloc
-RUN apk add --no-cache jemalloc
+# Set jemalloc
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
-# Set environment variable to use jemalloc
-ENV LD_PRELOAD=/usr/lib/libjemalloc.so.2
+# Install JBang
+RUN curl -Ls https://sh.jbang.dev | bash -s - app setup
 
-# Add `uv` for extended MCP support
-COPY --from=ghcr.io/astral-sh/uv:0.6.13 /uv /uvx /bin/
-RUN uv --version
+# Add JBang to PATH
+ENV PATH="/root/.jbang/bin:${PATH}"
 
-RUN mkdir -p /app && chown node:node /app
+# Create app directory
+RUN mkdir -p /app
 WORKDIR /app
 
-USER node
+# Copy project files
+COPY . .
 
-COPY --chown=node:node . .
-
-RUN \
-    # Allow mounting of these files, which have no default
-    touch .env ; \
-    # Create directories for the volumes to inherit the correct permissions
-    mkdir -p /app/client/public/images /app/api/logs ; \
-    npm config set fetch-retry-maxtimeout 600000 ; \
-    npm config set fetch-retries 5 ; \
-    npm config set fetch-retry-mintimeout 15000 ; \
-    npm install --no-audit; \
-    # React client build
-    NODE_OPTIONS="--max-old-space-size=2048" npm run frontend; \
-    npm prune --production; \
+# Install Node.js dependencies and build frontend
+RUN npm install --no-audit && \
+    NODE_OPTIONS="--max-old-space-size=2048" npm run frontend && \
+    npm prune --production && \
     npm cache clean --force
 
-RUN mkdir -p /app/client/public/images /app/api/logs
-
-# Node API setup
+# Expose application port
 EXPOSE 3080
-ENV HOST=0.0.0.0
-CMD ["npm", "run", "backend"]
 
-# Optional: for client with nginx routing
-# FROM nginx:stable-alpine AS nginx-client
-# WORKDIR /usr/share/nginx/html
-# COPY --from=node /app/client/dist /usr/share/nginx/html
-# COPY client/nginx.conf /etc/nginx/conf.d/default.conf
-# ENTRYPOINT ["nginx", "-g", "daemon off;"]
+# Start the backend
+CMD ["npm", "run", "backend"]
